@@ -58,30 +58,26 @@ graph TD
 
 ## ❓ Common Technical Interview Questions
 
-#### Q: "Why Next.js instead of standard React (Vite)?"
-> **Answer:** *"Next.js gives us the benefits of the App Router for clean layouts, optimized SEO, and fast bundle sizes. It also provides an out-of-the-box build framework that Vercel optimizes for CDNs, ensuring that client-side visual libraries (like React Flow and Framer Motion) render smoothly."*
+#### Q1: "Why did you use multiple agents instead of one LLM?"
+> **Answer:** *"A single LLM prompt suffers from context dilution, prompt length limits, and a high rate of architectural hallucinations when designing complex systems. By splitting the problem space into specialized agents (Planner, Requirements, Security, Database, Infra), each agent operates with a constrained, highly focused system instruction set. This separation of concerns mimics a real-world system architecture review board where specialists (e.g., a database engineer and a security lead) debate trade-offs. The result is a much lower error rate and more realistic technology recommendations."*
 
-#### Q: "Why did you choose Zustand over Redux or React Context?"
-> **Answer:** *"React Context causes global re-renders on all consuming components when any value changes, which is a performance bottleneck for interactive drag-and-drop canvases. Redux is robust but introduces massive boilerplate. Zustand is lightweight, uses a simple selector pattern to prevent unnecessary re-renders, and allowed us to easily write custom middleware to capture state snapshots for our Undo/Redo history."*
+#### Q2: "How does the orchestrator work?"
+> **Answer:** *"The orchestrator is an asynchronous execution coordinator. When a session starts, it loads the project's parameters and controls the agent pipeline. When the user submits requirements, the orchestrator feeds the conversation history to the Planner to draft a design. It then routes that draft to the Database Agent to verify schemas, the Security Agent to run audits, and the Infra Agent to map cloud dependencies. Once consensus is reached, it compiles the final JSON node/edge canvas structure, persists it to PostgreSQL, and broadcasts the status updates."*
 
-#### Q: "How does the WebSocket implementation handle connections?"
-> **Answer:** *"We use FastAPI's asynchronous WebSocket handler. When a user starts a project discovery interview, we establish a connection using a unique session ID. The backend orchestrator streams JSON events (`agent: 'Planner', status: 'running', log: '...'`) over the socket. On the client, React listens and appends logs to the local queue. If the connection drops, we have basic reconnect hooks to maintain session state."*
+#### Q3: "Why WebSockets?"
+> **Answer:** *"The discovery interview is an interactive session. Polling the database with HTTP requests introduces latency, increases server overhead, and ruins the real-time console experience. WebSockets establish a single, bi-directional, persistent TCP connection. This allows the backend orchestrator to stream logs instantly as agents execute their tasks (e.g. 'Planner is building nodes...', 'Security is auditing network rules...') and handle incoming user answers with sub-millisecond latency."*
 
-#### Q: "Why did you move from SQLite to PostgreSQL?"
-> **Answer:** *"SQLite is excellent for local development but falls short for concurrent production deployments. It uses database-level locking for writes, which fails under concurrent user registration or high-frequency canvas saves. PostgreSQL gives us row-level locking, schema migrations, and connection pooling, making the platform production-grade."*
+#### Q4: "How is the React Flow canvas synchronized?"
+> **Answer:** *"React Flow maintains local UI states for high-frequency user actions like node dragging to guarantee 60fps rendering. If we synced every minor movement instantly to the backend, it would flood the database with write locks. To solve this, we debounce state updates: changes are captured immediately in our local Zustand store for instant undo/redo actions, but the background save to our PostgreSQL database is debounced by 500ms of inactivity, committing only the final node positions and edge graphs."*
 
----
+#### Q5: "How do you generate Terraform?"
+> **Answer:** *"Once the canvas configuration is finalized, the orchestrator maps the components to their respective cloud infrastructure definitions. The Infra Agent parses this JSON node data and matches each component (like an API gateway, ECS service, or RDS Postgres instance) to predefined HCL (HashiCorp Configuration Language) templates. It dynamically injects user-defined variables (such as regions, instance classes, and VPC subnets) to output valid Terraform `.tf` files, which are then bundled and pushed directly to the user's GitHub repository."*
 
-## 🏆 Key Engineering Challenges Solved (STAR Method)
+#### Q6: "What was the hardest engineering challenge?"
+> **Answer:** *"The hardest challenge was managing state synchronization consistency across three layers: React Flow's local viewport DOM, Zustand's local client history stack (for instant Undo/Redo commands), and the relational PostgreSQL schema. Frequent node drags caused race conditions and database locks on the API. 
+> 
+> I solved this by decoupling the state updates: 
+> 1. React Flow updates the local canvas UI immediately.
+> 2. The local changes are recorded instantly in the Zustand `past` history stack to support seamless `Ctrl/Cmd+Z` rollbacks.
+> 3. We use a debounced worker that waits for 500ms of drag inactivity before sending the batched coordinate mutations to the FastAPI backend, updating PostgreSQL in a single database transaction. This eliminated database write locks and maintained perfect client-server synchronization."*
 
-### Challenge 1: Preventing Overlay Collisions & Clipping
-*   **Situation:** During scaling simulations (from 10k to 10M requests), agent recommendation cards were absolutely positioned on the React Flow canvas, causing overlapping text and clipping on mobile and tablet viewport resolutions.
-*   **Task:** Restructure the UI to ensure clear information hierarchy without cluttering the interactive design canvas.
-*   **Action:** Removed the absolute-positioned floating tooltip overlays. Created a bottom-aligned, responsive **Recommendation Detail Row** within the canvas panel that updates dynamically based on the hovered/clicked component. Aligned inline informational icons using flexboxes and vertical alignments.
-*   **Result:** Resolved 100% of overlapping layout errors and improved layout readability, leading to a mobile-friendly studio viewport.
-
-### Challenge 2: Secure Repository Export Flow
-*   **Situation:** The export feature allows users to push configurations directly to GitHub, but invalid user inputs (like typing email addresses or typing incorrect formats instead of `owner/repo`) resulted in uncaught backend repository creation errors.
-*   **Task:** Implement strict verification to prevent broken Git pushes and safeguard credentials.
-*   **Action:** Designed a client-side regex check (`^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$`) preventing users from inputting emails or invalid text. Added backend validation checks to return descriptive HTTP status codes.
-*   **Result:** Reduced invalid backend requests to 0%, improving the reliability of the deployment pipeline.
