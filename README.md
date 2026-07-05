@@ -1,8 +1,16 @@
 # Archon — Collaborative AI Systems Design Platform
 
+[![Frontend Web App](https://img.shields.io/badge/Frontend-Vercel-pink?style=for-the-badge&logo=vercel)](https://archon-architect.vercel.app)
+[![Backend API Service](https://img.shields.io/badge/Backend-FastAPI-emerald?style=for-the-badge&logo=fastapi)](https://archon-1hpp.onrender.com/docs)
+
 Archon is an interactive, multi-agent AI systems design platform that guides developers and software teams from a raw product idea to a production-ready, security-audited, and cost-aware cloud architecture. 
 
 It replicates the logic of an experienced Staff Systems Architect, using specialized reasoning agents to interview the user, compile infrastructure choices, simulate trade-offs, and generate a dynamic architecture canvas.
+
+### 🌐 Live Deployments
+*   **Web Application (Next.js/Vercel):** [https://archon-architect.vercel.app](https://archon-architect.vercel.app)
+*   **API Command Center (FastAPI/Render):** [https://archon-1hpp.onrender.com](https://archon-1hpp.onrender.com)
+*   **Interactive Swagger Documentation:** [https://archon-1hpp.onrender.com/docs](https://archon-1hpp.onrender.com/docs)
 
 ---
 
@@ -74,6 +82,7 @@ To run Archon locally, you must connect the backend to a running PostgreSQL data
 4. Define your environment variables (create a `.env` file or export them directly):
    ```bash
    export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/archon"
+   export GROQ_API_KEY="your-groq-api-key"
    export JWT_SECRET="your-super-secure-signing-key-here"
    ```
 5. Run the development server:
@@ -124,6 +133,7 @@ The system expects the following environment variables. If you are running via D
 | Variable | Requirement | Purpose |
 | :--- | :--- | :--- |
 | `DATABASE_URL` | **Required** (PostgreSQL URL) | Connection string (SQLite is disabled for data integrity) |
+| `GROQ_API_KEY` | **Required** (Groq Console) | API Key for LLM multi-agent orchestrator reasoning |
 | `JWT_SECRET` | Optional (Fallback provided) | Encryption signing key for JWT user tokens |
 | `NEXT_PUBLIC_API_URL` | Optional (Fallback provided) | Frontend target API url for communication |
 | `PORT` | Optional (Fallback provided) | Service execution ports (3000 for frontend / 8000 for backend) |
