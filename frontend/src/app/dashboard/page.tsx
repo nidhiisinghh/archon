@@ -22,7 +22,15 @@ import {
 export default function Dashboard() {
   const { projects, fetchProjects, isLoading, token, logout, user, theme, toggleTheme, deleteProject } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
+  const [isCloud, setIsCloud] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (apiUrl && !apiUrl.includes('localhost')) {
+      setIsCloud(true);
+    }
+  }, []);
 
   const formatScaleIndian = (scale?: string) => {
     if (!scale) return '1 Lakh';
@@ -59,19 +67,17 @@ export default function Dashboard() {
           <span className="font-bold tracking-tight text-white uppercase text-base">Archon Command Center</span>
         </div>
         
-        <div className="flex items-center gap-4 text-xs">
-          <button
+        <div className="flex items-center gap-4">
+          <button 
             onClick={toggleTheme}
-            className="bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white p-2 rounded transition-all cursor-pointer flex items-center justify-center"
-            title="Toggle theme mode"
+            className="p-2 text-zinc-400 hover:text-zinc-100 bg-zinc-900 border border-zinc-800 rounded transition-colors cursor-pointer"
+            aria-label="Toggle theme"
           >
-            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
-          {user && (
-            <div className="text-zinc-400">
-              Logged in as <span className="font-bold text-zinc-200">{user.name}</span>
-            </div>
-          )}
+          <span className="text-zinc-500 text-sm hidden sm:inline">
+            Logged in as <span className="text-zinc-300 font-semibold">{user?.name || 'User'}</span>
+          </span>
           <button
             onClick={() => {
               logout();
@@ -83,7 +89,7 @@ export default function Dashboard() {
           </button>
           <div className="bg-zinc-900 border border-zinc-800 text-zinc-400 px-3 py-1 rounded-full font-mono flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            Connected to Local Engine
+            {isCloud ? 'Connected to Cloud Engine' : 'Connected to Local Engine'}
           </div>
         </div>
       </nav>
