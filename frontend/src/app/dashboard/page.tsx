@@ -13,11 +13,14 @@ import {
   Cloud,
   ChevronRight,
   TrendingUp,
-  Cpu
+  Cpu,
+  Trash2,
+  Sun,
+  Moon
 } from 'lucide-react';
 
 export default function Dashboard() {
-  const { projects, fetchProjects, isLoading, token, logout, user, theme, toggleTheme } = useStore();
+  const { projects, fetchProjects, isLoading, token, logout, user, theme, toggleTheme, deleteProject } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const router = useRouter();
 
@@ -59,10 +62,10 @@ export default function Dashboard() {
         <div className="flex items-center gap-4 text-xs">
           <button
             onClick={toggleTheme}
-            className="bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white px-2.5 py-1.5 rounded transition-all font-semibold cursor-pointer"
+            className="bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white p-2 rounded transition-all cursor-pointer flex items-center justify-center"
             title="Toggle theme mode"
           >
-            {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
           </button>
           {user && (
             <div className="text-zinc-400">
@@ -130,14 +133,28 @@ export default function Dashboard() {
                 </div>
               ) : (
                 filteredProjects.map(project => (
-                  <Link 
+                  <div 
                     key={project.id} 
-                    href={`/studio/${project.id}`}
-                    className="group p-3 rounded bg-zinc-900/40 border border-zinc-900 hover:border-zinc-850 hover:bg-zinc-900/80 transition-all flex flex-col gap-1 text-left"
+                    onClick={() => router.push(`/studio/${project.id}`)}
+                    className="group relative p-3 rounded bg-zinc-900/40 border border-zinc-900 hover:border-zinc-850 hover:bg-zinc-900/80 transition-all flex flex-col gap-1 text-left cursor-pointer"
                   >
                     <div className="flex justify-between items-center">
                       <span className="text-xs font-bold text-zinc-200 group-hover:text-white">{project.name}</span>
-                      <ChevronRight className="w-3.5 h-3.5 text-zinc-650 group-hover:text-zinc-400 group-hover:translate-x-0.5 transition-all" />
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Are you sure you want to delete "${project.name}"?`)) {
+                              deleteProject(project.id);
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                          title="Delete Project"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <ChevronRight className="w-3.5 h-3.5 text-zinc-650 group-hover:text-zinc-400 group-hover:translate-x-0.5 transition-all" />
+                      </div>
                     </div>
                     {project.description && (
                       <p className="text-[11px] text-zinc-500 truncate max-w-[200px]">{project.description}</p>
@@ -151,7 +168,7 @@ export default function Dashboard() {
                         {formatScaleIndian(project.scale)}
                       </span>
                     </div>
-                  </Link>
+                  </div>
                 ))
               )}
             </div>

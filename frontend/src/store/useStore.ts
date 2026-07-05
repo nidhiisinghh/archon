@@ -83,6 +83,8 @@ interface AppState {
   scaleFactor: number; // 0: 10k, 1: 100k, 2: 1M, 3: 10M
   isLoading: boolean;
   selectedNodeId: string | null;
+  past: { nodes: Node[]; edges: Edge[] }[];
+  future: { nodes: Node[]; edges: Edge[] }[];
   
   // Auth actions
   login: (email: string, password: string) => Promise<boolean>;
@@ -95,6 +97,10 @@ interface AppState {
   fetchProjects: () => Promise<void>;
   fetchProjectDetails: (id: string) => Promise<void>;
   createProject: (data: Partial<Project>) => Promise<Project>;
+  deleteProject: (id: string) => Promise<boolean>;
+  updateProject: (id: string, data: Partial<Project>) => Promise<Project>;
+  regenerateProjectArchitecture: (id: string) => Promise<any>;
+  uploadProjectSpec: (projectId: string, file: File) => Promise<any>;
   fetchVersion: (projectId: string, versionId: string) => Promise<void>;
   saveNewVersion: (projectId: string, commitMsg: string) => Promise<void>;
   fetchDecisions: (projectId: string) => Promise<void>;
@@ -112,6 +118,9 @@ interface AppState {
   addChatMessage: (msg: ChatMessage) => void;
   setAgentThinking: (logs: AgentLog[]) => void;
   addAgentLog: (log: AgentLog) => void;
+  takeSnapshot: () => void;
+  undo: () => void;
+  redo: () => void;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -141,9 +150,11 @@ export const useStore = create<AppState>((set, get) => ({
   reviews: [],
   discoveryChat: [],
   agentThinking: [],
-  scaleFactor: 1, // default 100k
+  scaleFactor: typeof window !== 'undefined' ? parseInt(localStorage.getItem('archon_scale_factor') || '1') : 1,
   isLoading: false,
   selectedNodeId: null,
+  past: [],
+  future: [],
 
   login: async (email, password) => {
     try {
@@ -234,6 +245,192 @@ export const useStore = create<AppState>((set, get) => ({
       console.error(e);
     } finally {
       set({ isLoading: false });
+    }
+  },
+
+  updateProject: async (id: string, data: Partial<Project>) => {
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (get().token) {
+        headers['Authorization'] = `Bearer ${get().token}`;
+      }
+      const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error("Failed to update project settings");
+      const updatedProject = await res.json();
+      set(state => ({
+        projects: state.projects.map(p => p.id === id ? updatedProject : p),
+        currentProject: state.currentProject && state.currentProject.id === id ? updatedProject : state.currentProject
+      }));
+      return updatedProject;
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  },
+
+  regenerateProjectArchitecture: async (id: string) => {
+    set({ isLoading: true });
+    try {
+      const headers: Record<string, string> = {};
+      if (get().token) {
+        headers['Authorization'] = `Bearer ${get().token}`;
+      }
+      const res = await fetch(`${API_BASE}/api/projects/${id}/regenerate`, {
+        method: 'POST',
+        headers
+      });
+      if (!res.ok) throw new Error("Failed to regenerate project architecture");
+      const newVersion = await res.json();
+      
+      set(state => ({
+        versions: [newVersion, ...state.versions],
+        currentVersion: newVersion
+      }));
+
+      if (newVersion.components) {
+        const flowNodes = (newVersion.components || []).map((comp: any) => ({
+          id: comp.id || comp.name,
+          type: 'customNode',
+          position: { x: comp.x, y: comp.y },
+          data: {
+            id: comp.id || comp.name,
+            name: comp.name,
+            type: comp.type,
+            technology: comp.technology,
+            responsibilities: comp.responsibilities,
+            cost: comp.cost,
+            security_notes: comp.security_notes,
+            scaling_notes: comp.scaling_notes,
+            dependencies: comp.dependencies || []
+          }
+        }));
+
+        const flowEdges = (newVersion.connections || []).map((conn: any) => ({
+          id: conn.id || `edge_${conn.source_id}_${conn.target_id}`,
+          source: conn.source_id,
+          target: conn.target_id,
+          label: conn.label,
+          animated: conn.animated,
+          type: 'smoothstep',
+          style: { stroke: conn.animated ? '#ffffff' : 'rgba(255,255,255,0.25)' }
+        }));
+
+        set({
+          nodes: flowNodes,
+          edges: flowEdges,
+          selectedNodeId: null,
+          past: [],
+          future: []
+        });
+      }
+
+      get().fetchDecisions(id);
+      get().fetchReviews(id);
+
+      return newVersion;
+    } catch (e) {
+      console.error(e);
+      throw e;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  uploadProjectSpec: async (projectId: string, file: File) => {
+    set({ isLoading: true });
+    try {
+      const headers: Record<string, string> = {};
+      if (get().token) {
+        headers['Authorization'] = `Bearer ${get().token}`;
+      }
+      
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/upload-spec`, {
+        method: 'POST',
+        headers,
+        body: formData
+      });
+      if (!res.ok) throw new Error("Failed to upload specification");
+      const newVersion = await res.json();
+      
+      set(state => ({
+        versions: [newVersion, ...state.versions],
+        currentVersion: newVersion
+      }));
+
+      if (newVersion.components) {
+        const flowNodes = (newVersion.components || []).map((comp: any) => ({
+          id: comp.id || comp.name,
+          type: 'customNode',
+          position: { x: comp.x, y: comp.y },
+          data: {
+            id: comp.id || comp.name,
+            name: comp.name,
+            type: comp.type,
+            technology: comp.technology,
+            responsibilities: comp.responsibilities,
+            cost: comp.cost,
+            security_notes: comp.security_notes,
+            scaling_notes: comp.scaling_notes,
+            dependencies: comp.dependencies || []
+          }
+        }));
+
+        const flowEdges = (newVersion.connections || []).map((conn: any) => ({
+          id: conn.id || `edge_${conn.source_id}_${conn.target_id}`,
+          source: conn.source_id,
+          target: conn.target_id,
+          label: conn.label,
+          animated: conn.animated,
+          type: 'smoothstep',
+          style: { stroke: conn.animated ? '#ffffff' : 'rgba(255,255,255,0.25)' }
+        }));
+
+        set({
+          nodes: flowNodes,
+          edges: flowEdges,
+          selectedNodeId: null,
+          past: [],
+          future: []
+        });
+      }
+
+      get().fetchDecisions(projectId);
+      get().fetchReviews(projectId);
+
+      return newVersion;
+    } catch (e) {
+      console.error(e);
+      throw e;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  deleteProject: async (id: string) => {
+    try {
+      const headers: Record<string, string> = {};
+      if (get().token) {
+        headers['Authorization'] = `Bearer ${get().token}`;
+      }
+      const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+        method: 'DELETE',
+        headers
+      });
+      if (res.ok) {
+        set({ projects: get().projects.filter(p => p.id !== id) });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error(e);
+      return false;
     }
   },
 
@@ -329,6 +526,7 @@ export const useStore = create<AppState>((set, get) => ({
         style: { stroke: conn.animated ? '#6366f1' : 'rgba(255,255,255,0.20)', strokeWidth: conn.animated ? 2 : 1.5 }
       }));
 
+      get().takeSnapshot();
       set({ 
         currentVersion: data, 
         nodes: flowNodes, 
@@ -491,6 +689,7 @@ export const useStore = create<AppState>((set, get) => ({
         style: { stroke: conn.animated ? '#ffffff' : 'rgba(255,255,255,0.25)' }
       }));
 
+      get().takeSnapshot();
       set({ 
         nodes: flowNodes, 
         edges: flowEdges,
@@ -548,7 +747,10 @@ export const useStore = create<AppState>((set, get) => ({
   })),
 
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
-  setScaleFactor: (val) => set({ scaleFactor: val }),
+  setScaleFactor: (val) => {
+    if (typeof window !== 'undefined') localStorage.setItem('archon_scale_factor', String(val));
+    set({ scaleFactor: val });
+  },
   setDiscoveryChat: (chat) => set({ discoveryChat: chat }),
   addChatMessage: (msg) => set(state => ({ discoveryChat: [...state.discoveryChat, msg] })),
   setAgentThinking: (logs) => set({ agentThinking: logs }),
@@ -560,5 +762,51 @@ export const useStore = create<AppState>((set, get) => ({
       return { agentThinking: updated };
     }
     return { agentThinking: [...state.agentThinking, log] };
-  })
+  }),
+
+  takeSnapshot: () => {
+    const { nodes, edges, past } = get();
+    const snapshot = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges))
+    };
+    const newPast = [...past, snapshot].slice(-50);
+    set({ past: newPast, future: [] });
+  },
+
+  undo: () => {
+    const { past, nodes, edges, future } = get();
+    if (past.length === 0) return;
+    const previous = past[past.length - 1];
+    const newPast = past.slice(0, past.length - 1);
+    const current = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges))
+    };
+    set({
+      past: newPast,
+      future: [current, ...future],
+      nodes: previous.nodes,
+      edges: previous.edges,
+      selectedNodeId: null
+    });
+  },
+
+  redo: () => {
+    const { past, nodes, edges, future } = get();
+    if (future.length === 0) return;
+    const next = future[0];
+    const newFuture = future.slice(1);
+    const current = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges))
+    };
+    set({
+      past: [...past, current],
+      future: newFuture,
+      nodes: next.nodes,
+      edges: next.edges,
+      selectedNodeId: null
+    });
+  }
 }));

@@ -36,7 +36,13 @@ import {
   HelpCircle,
   Copy,
   UploadCloud,
-  AlertTriangle
+  AlertTriangle,
+  Trash2,
+  Undo,
+  Redo,
+  Settings,
+  Sun,
+  Moon
 } from 'lucide-react';
 
 // Register custom node type
@@ -368,6 +374,14 @@ function StudioContent() {
     setScaleFactor,
     selectedNodeId,
     setSelectedNodeId,
+    past,
+    future,
+    undo,
+    redo,
+    takeSnapshot,
+    updateProject,
+    regenerateProjectArchitecture,
+    uploadProjectSpec,
     token,
     user,
     logout,
@@ -401,6 +415,58 @@ function StudioContent() {
   const [isExporting, setIsExporting] = useState(false);
   const [prUrl, setPrUrl] = useState('');
   const [githubExportError, setGithubExportError] = useState('');
+
+  // Project requirements local settings form states
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [settingsName, setSettingsName] = useState('');
+  const [settingsDesc, setSettingsDesc] = useState('');
+  const [settingsIndustry, setSettingsIndustry] = useState('SaaS');
+  const [settingsCloud, setSettingsCloud] = useState('AWS');
+  const [settingsScale, setSettingsScale] = useState('100k');
+  const [settingsBudget, setSettingsBudget] = useState('Medium');
+
+  useEffect(() => {
+    if (currentProject) {
+      setSettingsName(currentProject.name || '');
+      setSettingsDesc(currentProject.description || '');
+      setSettingsIndustry(currentProject.industry || 'SaaS');
+      setSettingsCloud(currentProject.preferred_cloud || 'AWS');
+      setSettingsScale(currentProject.scale || '100k');
+      setSettingsBudget(currentProject.budget || 'Medium');
+    }
+  }, [currentProject]);
+
+  // Keyboard shortcuts for Undo/Redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isTyping = activeEl && (
+        activeEl.tagName === 'INPUT' || 
+        activeEl.tagName === 'TEXTAREA' || 
+        activeEl.getAttribute('contenteditable') === 'true'
+      );
+      if (isTyping) return;
+
+      const isMac = typeof window !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const modifier = isMac ? e.metaKey : e.ctrlKey;
+
+      if (modifier && e.key?.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      } else if (modifier && e.key?.toLowerCase() === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -444,6 +510,14 @@ function StudioContent() {
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
   }, [setSelectedNodeId]);
+
+  const onNodeDragStart = useCallback(() => {
+    takeSnapshot();
+  }, [takeSnapshot]);
+
+  const onNodeDragStop = useCallback(() => {
+    setNodes(nodes);
+  }, [nodes, setNodes]);
 
   // Selected Component helper
   const selectedNode = useMemo(() => {
@@ -545,10 +619,23 @@ function StudioContent() {
     // If no match, leave existing notes untouched
   }, []);
 
+  // Handler to delete the currently selected node
+  const handleDeleteNode = useCallback(() => {
+    if (!selectedNodeId) return;
+    takeSnapshot();
+    const updatedNodes = nodes.filter((n: any) => n.id !== selectedNodeId);
+    const updatedEdges = edges.filter((e: any) => e.source !== selectedNodeId && e.target !== selectedNodeId);
+    setNodes(updatedNodes);
+    setEdges(updatedEdges);
+    setSelectedNodeId(null);
+    setIsEditing(false);
+  }, [selectedNodeId, nodes, edges, setNodes, setEdges, setSelectedNodeId, takeSnapshot]);
+
   // Handler to save updated node details back to Zustand store
   const handleSaveDetails = useCallback(() => {
     if (!selectedNodeId) return;
-    setNodes((nds: any) => nds.map((n: any) => {
+    takeSnapshot();
+    const updatedNodes = nodes.map((n: any) => {
       if (n.id === selectedNodeId) {
         return {
           ...n,
@@ -564,17 +651,20 @@ function StudioContent() {
         };
       }
       return n;
-    }));
+    });
+    setNodes(updatedNodes);
     setIsEditing(false);
   }, [
     selectedNodeId,
+    nodes,
     editedName,
     editedTech,
     editedCost,
     editedResp,
     editedSecurity,
     editedScaling,
-    setNodes
+    setNodes,
+    takeSnapshot
   ]);
 
   // Dynamic Architectural Scoring Engine & Bottleneck Alert Rules
@@ -907,9 +997,63 @@ function StudioContent() {
     setIsCommitModalOpen(false);
   };
 
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!settingsName.trim()) return;
+
+    setIsRegenerating(true);
+    try {
+      await updateProject(projectId, {
+        name: settingsName,
+        description: settingsDesc,
+        industry: settingsIndustry,
+        preferred_cloud: settingsCloud,
+        scale: settingsScale,
+        budget: settingsBudget
+      });
+
+      await regenerateProjectArchitecture(projectId);
+      setIsSettingsOpen(false);
+    } catch (err) {
+      console.error(err);
+      alert("Error saving settings & regenerating architecture.");
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File size exceeds the 10MB limit.");
+      return;
+    }
+
+    setIsRegenerating(true);
+    try {
+      await uploadProjectSpec(projectId, file);
+      alert(`Successfully ingested design spec file "${file.name}"! The consensus agents have generated an updated version of your architecture.`);
+    } catch (err) {
+      console.error(err);
+      alert("Error ingesting design specification. Please verify file format and try again.");
+    } finally {
+      setIsRegenerating(false);
+      e.target.value = '';
+    }
+  };
+
   // Export to GitHub
   const handleExportToGitHub = async () => {
     if (!githubRepo || !githubToken) return;
+
+    const repoTrimmed = githubRepo.trim();
+    if (repoTrimmed.includes('@') || !repoTrimmed.includes('/') || repoTrimmed.split('/').length !== 2) {
+      setGithubExportError("Invalid Repository format. Please use 'owner/repository-name' (e.g. 'myusername/archon-infra'), not an email address.");
+      return;
+    }
+
     setIsExporting(true);
     setPrUrl('');
     setGithubExportError('');
@@ -1007,10 +1151,10 @@ function StudioContent() {
         <div className="flex items-center gap-2">
           <button
             onClick={toggleTheme}
-            className="px-2.5 py-1.5 rounded bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white transition-all text-xs font-semibold cursor-pointer"
+            className="p-2 rounded bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white transition-all cursor-pointer flex items-center justify-center"
             title="Toggle theme mode"
           >
-            {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
           </button>
           {user && (
             <div className="text-[10px] text-zinc-400 mr-2">
@@ -1025,6 +1169,15 @@ function StudioContent() {
             className="px-2.5 py-1.5 rounded bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors text-xs font-semibold"
           >
             Sign Out
+          </button>
+
+          <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            title="Configure Project Settings & Requirements"
+          >
+            <Settings className="w-3.5 h-3.5 text-zinc-400" />
+            Settings
           </button>
 
           <button 
@@ -1197,6 +1350,25 @@ function StudioContent() {
               Est. Infrastructure Cost:{' '}
               <span className="font-bold text-white">{formatINR(totalMonthlyCost * 85)}/mo</span>
             </div>
+
+            <div className="flex bg-zinc-950/80 border border-zinc-900 rounded-lg p-0.5 backdrop-blur-md gap-0.5">
+              <button
+                onClick={undo}
+                disabled={past.length === 0}
+                className="p-1.5 text-zinc-400 hover:text-white disabled:text-zinc-700 hover:bg-zinc-900 rounded transition-all cursor-pointer flex items-center justify-center"
+                title="Undo (Cmd+Z / Ctrl+Z)"
+              >
+                <Undo className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={redo}
+                disabled={future.length === 0}
+                className="p-1.5 text-zinc-400 hover:text-white disabled:text-zinc-700 hover:bg-zinc-900 rounded transition-all cursor-pointer flex items-center justify-center"
+                title="Redo (Cmd+Y / Ctrl+Y)"
+              >
+                <Redo className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           <ReactFlow
@@ -1207,6 +1379,8 @@ function StudioContent() {
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDragStop={onNodeDragStop}
             fitView
             className="flex-1"
           >
@@ -1459,12 +1633,23 @@ function StudioContent() {
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => setIsEditing(true)}
-                          className="w-full bg-zinc-950 border border-zinc-850 hover:bg-zinc-900 hover:text-white text-zinc-300 transition-all font-semibold py-2 px-3 rounded-lg text-xs flex items-center justify-center mt-2 cursor-pointer"
-                        >
-                          Edit Details
-                        </button>
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={() => setIsEditing(true)}
+                            className="flex-1 bg-zinc-950 border border-zinc-850 hover:bg-zinc-900 hover:text-white text-zinc-300 transition-all font-semibold py-2 px-3 rounded-lg text-xs flex items-center justify-center cursor-pointer"
+                          >
+                            Edit Details
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`Delete "${(selectedNode?.data as any)?.name}" from canvas?`)) handleDeleteNode();
+                            }}
+                            className="bg-rose-950/30 border border-rose-900/50 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 transition-all py-2 px-3 rounded-lg text-xs flex items-center justify-center cursor-pointer"
+                            title="Delete this node"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </>
                     )}
                   </div>
@@ -1730,11 +1915,21 @@ function StudioContent() {
 
                 <div className="mt-4 pt-4 border-t border-zinc-900/60">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3">Upload Diagrams & Docs</h3>
-                  <div className="border border-dashed border-zinc-800 hover:border-zinc-700 transition-colors rounded-lg p-6 flex flex-col items-center justify-center gap-2 cursor-pointer bg-zinc-900/10">
+                  <input
+                    type="file"
+                    id="file-uploader"
+                    onChange={handleFileUpload}
+                    style={{ display: 'none' }}
+                    accept=".xml,.drawio,.mmd,.mermaid,.txt,.pdf,.json"
+                  />
+                  <label
+                    htmlFor="file-uploader"
+                    className="border border-dashed border-zinc-800 hover:border-zinc-700 transition-colors rounded-lg p-6 flex flex-col items-center justify-center gap-2 cursor-pointer bg-zinc-900/10"
+                  >
                     <UploadCloud className="w-6 h-6 text-zinc-500" />
                     <span className="text-[11px] font-bold text-zinc-350">Upload Draw.io / Mermaid / PDF</span>
                     <span className="text-[9px] text-zinc-550">File size capped at 10MB</span>
-                  </div>
+                  </label>
                 </div>
               </div>
             )}
@@ -1776,6 +1971,143 @@ function StudioContent() {
                 Save Commit
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Project Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-panel w-full max-w-md rounded-xl p-6 flex flex-col gap-4 text-left border border-zinc-900 bg-zinc-950">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white">Project Requirements & Settings</h3>
+                <p className="text-[10px] text-zinc-500 mt-0.5">Modify parameters to update metadata and re-generate design recommendations.</p>
+              </div>
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="text-zinc-500 hover:text-white transition-colors cursor-pointer text-xs"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <form onSubmit={handleSaveSettings} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Project Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Project name"
+                  value={settingsName}
+                  onChange={e => setSettingsName(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-850 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-700"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Project Description</label>
+                <textarea
+                  rows={2}
+                  placeholder="Primary business goals and target features..."
+                  value={settingsDesc}
+                  onChange={e => setSettingsDesc(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-850 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-700 resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Target Industry</label>
+                  <select
+                    value={settingsIndustry}
+                    onChange={e => setSettingsIndustry(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-850 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-700 cursor-pointer"
+                  >
+                    <option value="SaaS">SaaS / Web App</option>
+                    <option value="Fintech">Fintech / Banking</option>
+                    <option value="Healthcare">Healthcare / HIPAA</option>
+                    <option value="E-commerce">E-commerce / Retail</option>
+                    <option value="IoT">IoT / Realtime Streams</option>
+                    <option value="Social">Social Media / Feeds</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Preferred Cloud</label>
+                  <select
+                    value={settingsCloud}
+                    onChange={e => setSettingsCloud(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-850 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-700 cursor-pointer"
+                  >
+                    <option value="AWS">Amazon Web Services (AWS)</option>
+                    <option value="GCP">Google Cloud Platform (GCP)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Target Scale</label>
+                  <select
+                    value={settingsScale}
+                    onChange={e => setSettingsScale(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-850 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-700 cursor-pointer"
+                  >
+                    <option value="10k">10k active users</option>
+                    <option value="100k">100k active users</option>
+                    <option value="1M">1M active users</option>
+                    <option value="10M">10M active users</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Budget Limit</label>
+                  <select
+                    value={settingsBudget}
+                    onChange={e => setSettingsBudget(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-900 border border-zinc-850 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-700 cursor-pointer"
+                  >
+                    <option value="Low">Low / Cost Optimization</option>
+                    <option value="Medium">Medium / Default Balanced</option>
+                    <option value="High">High / Enterprise Redundancy</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end mt-2 pt-3 border-t border-zinc-900">
+                <button 
+                  type="button"
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-colors text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="px-4 py-2 rounded-lg bg-white text-black hover:bg-zinc-200 transition-colors text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Save & Regenerate
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Regeneration loading screen overlay */}
+      {isRegenerating && (
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
+          <div className="flex flex-col items-center gap-4 text-center max-w-sm">
+            <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center animate-pulse shadow-2xl shadow-white/10">
+              <span className="text-black font-extrabold text-2xl tracking-tighter">A</span>
+            </div>
+            <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin mt-2" />
+            <h3 className="text-sm font-bold text-white tracking-wide mt-2">Regenerating Architecture Consensus...</h3>
+            <p className="text-[11px] text-zinc-550 leading-relaxed mt-1">
+              Consensus agents are re-evaluating Cloud provider recommendations, infrastructure scaling limits, security isolation boundaries, and costs based on updated settings.
+            </p>
           </div>
         </div>
       )}

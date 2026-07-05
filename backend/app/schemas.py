@@ -72,6 +72,18 @@ class ProjectBase(BaseModel):
 class ProjectCreate(ProjectBase):
     pass
 
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    industry: Optional[str] = None
+    scale: Optional[str] = None
+    region: Optional[str] = None
+    target_users: Optional[str] = None
+    compliance: Optional[str] = None
+    preferred_cloud: Optional[str] = None
+    budget: Optional[str] = None
+    team_size: Optional[int] = None
+
 class ProjectResponse(ProjectBase):
     id: str
     created_at: datetime

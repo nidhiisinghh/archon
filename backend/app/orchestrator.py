@@ -15,6 +15,7 @@ class AgentOrchestrator:
         self.cloud = project_data.get("preferred_cloud", "AWS")
         self.budget = project_data.get("budget", "Medium")
         self.compliance = project_data.get("compliance", "None")
+        self.tech_prefs = project_data.get("tech_preferences", "")
         
     async def run_discovery_stream(self) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -126,7 +127,9 @@ class AgentOrchestrator:
                     f"- Scaling / Scale Target: {self.scale}\n"
                     f"- Budget Tier: {self.budget}\n"
                     f"- Compliance Level: {self.compliance}\n"
-                    f"Adjust the technology choices, security nodes, and topology structure to match this context."
+                    + (f"- Preferred Tech Stack: {self.tech_prefs} — PRIORITIZE these technologies in your component choices wherever sensible.\n" if self.tech_prefs else "")
+                    + f"Adjust the technology choices, security nodes, and topology structure to match this context."
+                    + "\n\nFor EACH decision in the 'decisions' array, include at least 5 alternatives with detailed pros and cons covering: FastAPI, Node.js, Go, Spring Boot, Django for APIs; PostgreSQL, MongoDB, DynamoDB, CockroachDB, MySQL for databases; Redis, Memcached, Dragonfly for caches; Kafka, RabbitMQ, SQS, NATS for queues."
                 )
 
                 res = requests.post(
@@ -429,45 +432,94 @@ class AgentOrchestrator:
 
     def _generate_decisions_data(self) -> List[Dict[str, Any]]:
         is_aws = self.cloud.upper() == "AWS"
-        db_tech = "Amazon Aurora PostgreSQL" if is_aws else "PostgreSQL"
-        cache_tech = "AWS ElastiCache (Redis)" if is_aws else "Redis"
-        queue_tech = "Amazon SQS / MSK" if is_aws else "RabbitMQ"
+        is_gcp = self.cloud.upper() == "GCP"
+        is_azure = self.cloud.upper() == "AZURE"
+
+        db_tech = "Amazon Aurora PostgreSQL" if is_aws else ("Cloud SQL PostgreSQL" if is_gcp else "Azure Database for PostgreSQL" if is_azure else "PostgreSQL")
+        cache_tech = "AWS ElastiCache (Redis)" if is_aws else ("Memorystore Redis" if is_gcp else "Azure Cache for Redis" if is_azure else "Redis")
+        queue_tech = "Amazon SQS / MSK" if is_aws else ("Google Pub/Sub" if is_gcp else "Azure Service Bus" if is_azure else "RabbitMQ")
+        compute_tech = "AWS EKS (Kubernetes)" if is_aws else ("GKE" if is_gcp else "Azure AKS" if is_azure else "Docker / Kubernetes")
+        api_tech = "FastAPI" if "python" in self.tech_prefs.lower() else ("Spring Boot" if "java" in self.tech_prefs.lower() else ("Go / Gin" if "go" in self.tech_prefs.lower() else "Node.js with Express.js"))
 
         return [
             {
+                "component_name": "Core Backend API",
+                "chosen_tech": api_tech,
+                "reason": f"Optimal for {self.industry} industry workloads requiring high throughput and developer velocity.",
+                "evidence": f"Matches preferred tech preferences: {self.tech_prefs or 'general best practices'}.",
+                "trade_offs": "Vertical scaling limits vs. Go's raw throughput. Framework lock-in risk.",
+                "confidence": 0.90,
+                "alternatives": [
+                    {"name": "FastAPI (Python)", "pros": "Async-native, Pydantic validation, auto OpenAPI docs, great for ML integration.", "cons": "GIL limits true parallelism; needs Gunicorn+Uvicorn for production concurrency."},
+                    {"name": "Node.js + Express.js", "pros": "Huge ecosystem, fast I/O, same language as frontend.", "cons": "Callback complexity, single-threaded model needs clustering for CPU-bound tasks."},
+                    {"name": "Spring Boot (Java)", "pros": "Enterprise-grade, battle-tested, excellent ecosystem for microservices.", "cons": "High memory footprint, slower startup time, verbose boilerplate."},
+                    {"name": "Go / Gin", "pros": "Extremely low latency, minimal memory, ideal for high-concurrency APIs.", "cons": "Smaller ecosystem, verbose error handling, less beginner-friendly."},
+                    {"name": "Ruby on Rails", "pros": "Rapid prototyping, convention-over-configuration, vast gems ecosystem.", "cons": "Slower than compiled alternatives at high load; Ruby GIL limits parallelism."},
+                    {"name": "Django (Python)", "pros": "Built-in ORM, admin panel, batteries-included framework.", "cons": "Monolithic by default; REST APIs require DRF boilerplate on top."}
+                ]
+            },
+            {
                 "component_name": "Main Database",
                 "chosen_tech": db_tech,
-                "reason": "Ensures transactional safety and relational integrity for core models.",
-                "evidence": f"Fits perfectly for {self.industry} models requiring complex relationships.",
-                "trade_offs": "Difficult to scale writes globally without sharding strategies.",
+                "reason": "Ensures ACID transactional safety and relational integrity for core business models.",
+                "evidence": f"Fits {self.industry} models requiring complex joins, FK constraints, and reporting queries.",
+                "trade_offs": "Difficult to scale writes globally without sharding strategies. Schema migrations require discipline.",
                 "confidence": 0.95,
                 "alternatives": [
-                    {"name": "MongoDB", "pros": "Dynamic JSON schema, easy scaling.", "cons": "Weak cross-document transactions."},
-                    {"name": "CockroachDB", "pros": "Globally distributed SQL.", "cons": "High latency and setup complexity."}
+                    {"name": "PostgreSQL", "pros": "Open-source, ACID-compliant, JSONB support, excellent extensions ecosystem (pgvector, PostGIS).", "cons": "Manual replication setup; write scaling needs pg-pool or Citus."},
+                    {"name": "MongoDB", "pros": "Dynamic JSON schema, easy horizontal sharding, great for document-heavy workloads.", "cons": "Weak cross-document transactions; joins are expensive via $lookup."},
+                    {"name": "MySQL / Aurora MySQL", "pros": "Widely adopted, strong replication, great cloud-managed options.", "cons": "Less feature-rich than PostgreSQL; limited JSONB support."},
+                    {"name": "CockroachDB", "pros": "Globally distributed SQL, automatic sharding, strong consistency across regions.", "cons": "High latency on single-region reads; complex operational overhead."},
+                    {"name": "DynamoDB", "pros": "Fully managed, serverless auto-scaling, single-digit ms latency at any scale.", "cons": "NoSQL only; complex data modelling required; expensive at high read/write volumes."},
+                    {"name": "PlanetScale (MySQL-compatible)", "pros": "Branching workflow, zero-downtime schema changes, edge caching built-in.", "cons": "No foreign key constraints enforced at DB level; vendor lock-in."}
                 ]
             },
             {
                 "component_name": "Cache Layer",
                 "chosen_tech": cache_tech,
-                "reason": "Allows sub-millisecond session access times to fit user SLA parameters.",
-                "evidence": "Minimizes database query load by over 80%.",
-                "trade_offs": "Cache synchronization and invalidation logic overhead.",
-                "confidence": 0.90,
+                "reason": "Allows sub-millisecond session and catalog read times, reducing DB load by 80%+.",
+                "evidence": "Redis benchmark: 100,000+ read ops/sec on a single node.",
+                "trade_offs": "Cache invalidation logic adds engineering complexity. Data loss risk on crash without persistence.",
+                "confidence": 0.92,
                 "alternatives": [
-                    {"name": "Memcached", "pros": "Simple multi-threading.", "cons": "No built-in persistence layers."},
-                    {"name": "In-Memory Map", "pros": "Zero network latency.", "cons": "Cannot share state between load-balanced server replicas."}
+                    {"name": "Redis", "pros": "Rich data structures (sorted sets, streams), pub/sub, persistence (RDB/AOF), Lua scripting.", "cons": "Single-threaded core; memory-bound; cluster mode adds operational overhead."},
+                    {"name": "Memcached", "pros": "Simpler, multi-threaded, lower memory overhead for pure key-value caching.", "cons": "No persistence, no data structures, no pub/sub, no Lua scripting."},
+                    {"name": "Dragonfly", "pros": "Redis-compatible, 25x throughput improvement, multi-threaded architecture.", "cons": "Newer ecosystem, less community battle-tested than Redis."},
+                    {"name": "Hazelcast", "pros": "In-memory grid, distributed computing, Java-native integration.", "cons": "JVM dependency, complex cluster management, expensive enterprise features."},
+                    {"name": "ValkeyDB", "pros": "Open-source Redis fork, BSD-licensed, binary-compatible with Redis clients.", "cons": "Very new ecosystem; fewer managed cloud offerings currently."},
+                    {"name": "In-process LRU Cache", "pros": "Zero network latency, simplest implementation.", "cons": "Not shared between instances; causes stale data on horizontal scale-out."}
                 ]
             },
             {
                 "component_name": "Message Broker",
                 "chosen_tech": queue_tech,
-                "reason": "Decouples the sync API response path from long-running worker operations.",
-                "evidence": "Maintains API response loops under the 200ms limit.",
-                "trade_offs": "Eventual consistency and dead-letter queue complexity.",
+                "reason": "Decouples the sync API response path from long-running worker operations, keeping P99 latency under 200ms.",
+                "evidence": "Async task processing prevents response thread blocking on email/PDF/payment operations.",
+                "trade_offs": "Eventual consistency. Dead-letter queue management complexity. Adds infrastructure cost.",
                 "confidence": 0.88,
                 "alternatives": [
-                    {"name": "Apache Kafka", "pros": "High-volume stream replay.", "cons": "Extremely complex infrastructure configuration."},
-                    {"name": "DB Queue", "pros": "Easy setup.", "cons": "Highly polling-intensive, slows DB down."}
+                    {"name": "Apache Kafka", "pros": "Extremely high throughput (millions/sec), replay capability, event sourcing pattern support.", "cons": "Heavy infrastructure (ZooKeeper/KRaft), steep learning curve, overkill for simple task queues."},
+                    {"name": "RabbitMQ", "pros": "Flexible routing via exchanges, AMQP standard, dead-letter queues, easy setup.", "cons": "Not designed for event replay; message loss risk without durable configuration."},
+                    {"name": "Amazon SQS", "pros": "Fully managed, infinite scale, dead-letter queues, FIFO ordering available.", "cons": "AWS-only; polling model adds latency; no native streaming or replay."},
+                    {"name": "Google Pub/Sub", "pros": "Fully managed, global scale, push/pull delivery, automatic message retention.", "cons": "GCP-only; at-least-once delivery requires idempotent consumers."},
+                    {"name": "NATS JetStream", "pros": "Extremely low latency (<1ms), lightweight, cloud-native, supports streams and subjects.", "cons": "Smaller ecosystem than Kafka/RabbitMQ; less enterprise adoption."},
+                    {"name": "Celery + Redis", "pros": "Simple task queue using Redis as broker, native Python integration, beat scheduler.", "cons": "Redis not designed as queue; high polling load; no message replay capability."}
+                ]
+            },
+            {
+                "component_name": "Container Orchestration",
+                "chosen_tech": compute_tech,
+                "reason": f"Enables horizontal scaling, zero-downtime deployments, and resource isolation on {self.cloud}.",
+                "evidence": "Kubernetes HPA scales pods automatically based on CPU/memory metrics.",
+                "trade_offs": "Significant operational overhead. Steep learning curve. Kubernetes complexity can be overkill for small teams.",
+                "confidence": 0.85,
+                "alternatives": [
+                    {"name": "Kubernetes (EKS/GKE/AKS)", "pros": "Industry standard, massive ecosystem, powerful autoscaling, service mesh support.", "cons": "Extremely complex; requires dedicated DevOps expertise; expensive control plane."},
+                    {"name": "AWS ECS + Fargate", "pros": "Serverless containers, no cluster management, pay per task, easy AWS integration.", "cons": "AWS-only; less flexible than Kubernetes; limited community tooling."},
+                    {"name": "Docker Swarm", "pros": "Simple native Docker clustering, easy setup, good for small teams.", "cons": "Less feature-rich than Kubernetes; limited community support, declining adoption."},
+                    {"name": "Fly.io", "pros": "Simplified global deployment, edge computing, fast deploy CLI, affordable.", "cons": "Smaller ecosystem; less suitable for complex enterprise workloads."},
+                    {"name": "Railway / Render", "pros": "Zero DevOps, one-click deploy, automatic HTTPS, great for MVPs.", "cons": "Limited scaling controls; higher cost at scale; not suitable for production enterprise."},
+                    {"name": "Nomad (HashiCorp)", "pros": "Simpler than Kubernetes, supports non-container workloads, good multi-cloud support.", "cons": "Smaller ecosystem, requires more manual service mesh setup."}
                 ]
             }
         ]

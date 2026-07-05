@@ -15,7 +15,9 @@ import {
   Cloud,
   CheckCircle,
   HelpCircle,
-  Code
+  Code,
+  Sun,
+  Moon
 } from 'lucide-react';
 
 export default function NewProjectWizard() {
@@ -36,7 +38,8 @@ export default function NewProjectWizard() {
     industry: 'SaaS',
     preferred_cloud: 'AWS',
     scale: '100k',
-    budget: 'Medium'
+    budget: 'Medium',
+    tech_preferences: ''
   });
   
   const [step, setStep] = useState<'form' | 'discovery'>('form');
@@ -190,10 +193,10 @@ export default function NewProjectWizard() {
         <div className="flex items-center gap-4 text-xs">
           <button
             onClick={toggleTheme}
-            className="bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white px-2.5 py-1.5 rounded transition-all font-semibold cursor-pointer"
+            className="bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white p-2 rounded transition-all cursor-pointer flex items-center justify-center"
             title="Toggle theme mode"
           >
-            {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
           </button>
           {user && (
             <div className="text-zinc-400">
@@ -317,6 +320,21 @@ export default function NewProjectWizard() {
                       <option value="High">High (₹2.5L+/mo)</option>
                     </select>
                   </div>
+                </div>
+
+                {/* Tech Stack Preferences */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                    Preferred Tech Stack <span className="text-zinc-600 normal-case font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. FastAPI, PostgreSQL, Redis, React Native..."
+                    value={formData.tech_preferences}
+                    onChange={e => setFormData({...formData, tech_preferences: e.target.value})}
+                    className="px-3 py-2 bg-zinc-900/60 border border-zinc-800 rounded text-sm text-white placeholder-zinc-550 focus:outline-none focus:border-indigo-700"
+                  />
+                  <span className="text-[10px] text-zinc-600 italic">Archon will prioritize these in architecture decisions and trade-off comparisons.</span>
                 </div>
 
                 <button

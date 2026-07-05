@@ -126,6 +126,239 @@ def get_project(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str, db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user)):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Check ownership if project has a user_id
+    if project.user_id and (not current_user or project.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this project")
+        
+    db.delete(project)
+    db.commit()
+    return {"status": "success", "message": f"Project {project_id} deleted successfully"}
+
+@app.put("/api/projects/{project_id}", response_model=schemas.ProjectResponse)
+def update_project(project_id: str, project_update: schemas.ProjectUpdate, db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user)):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Check ownership if project has a user_id
+    if project.user_id and (not current_user or project.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this project")
+        
+    update_data = project_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(project, key, value)
+        
+    db.commit()
+    db.refresh(project)
+    return project
+
+@app.post("/api/projects/{project_id}/regenerate", response_model=schemas.VersionResponse)
+async def regenerate_project_architecture(project_id: str, db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user)):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    # Check ownership if project has a user_id
+    if project.user_id and (not current_user or project.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this project")
+        
+    # Instantiate orchestrator with the project's parameters
+    orchestrator = AgentOrchestrator(project_data={
+        "name": project.name,
+        "description": project.description,
+        "industry": project.industry,
+        "scale": project.scale,
+        "region": project.region,
+        "preferred_cloud": project.preferred_cloud,
+        "budget": project.budget,
+        "compliance": project.compliance
+    })
+    
+    # Run orchestrator stream to get the final compiled layout
+    final_update = None
+    async for update in orchestrator.run_discovery_stream():
+        if update["type"] == "architecture_ready":
+            final_update = update
+            break
+            
+    if not final_update:
+        raise HTTPException(status_code=500, detail="Failed to regenerate architecture layout")
+        
+    # Save the new version
+    latest_v = db.query(models.ArchitectureVersion).filter(
+        models.ArchitectureVersion.project_id == project_id
+    ).order_by(models.ArchitectureVersion.version_number.desc()).first()
+    
+    next_num = (latest_v.version_number + 1) if latest_v else 1
+    
+    db_version = models.ArchitectureVersion(
+        project_id=project_id,
+        version_number=next_num,
+        commit_msg=f"Regenerated architecture for settings: Cloud={project.preferred_cloud}, Scale={project.scale}",
+        parent_version_id=latest_v.id if latest_v else None
+    )
+    db.add(db_version)
+    db.commit()
+    db.refresh(db_version)
+    
+    # Save components
+    for comp in final_update["components"]:
+        db_comp = models.Component(
+            version_id=db_version.id,
+            name=comp["name"],
+            type=comp["type"],
+            technology=comp["technology"],
+            x=comp["x"],
+            y=comp["y"],
+            responsibilities=comp.get("responsibilities"),
+            dependencies=comp.get("dependencies", []),
+            cost=comp.get("cost", 0.0),
+            security_notes=comp.get("security_notes"),
+            scaling_notes=comp.get("scaling_notes")
+        )
+        db.add(db_comp)
+        
+    # Save connections
+    for conn in final_update["connections"]:
+        db_conn = models.Connection(
+            version_id=db_version.id,
+            source_id=conn["source_id"],
+            target_id=conn["target_id"],
+            label=conn.get("label", ""),
+            animated=conn.get("animated", False)
+        )
+        db.add(db_conn)
+        
+    # Add new review
+    rev_data = final_update["review"]
+    db_review = models.Review(
+        project_id=project_id,
+        version_id=db_version.id,
+        score=rev_data["score"],
+        security_issues=rev_data["security_issues"],
+        scalability_issues=rev_data["scalability_issues"],
+        cost_issues=rev_data["cost_issues"],
+        latency_issues=rev_data["latency_issues"],
+        general_recommendations=rev_data["general_recommendations"]
+    )
+    db.add(db_review)
+    
+    db.commit()
+    db.refresh(db_version)
+    
+    return db_version
+
+@app.post("/api/projects/{project_id}/upload-spec", response_model=schemas.VersionResponse)
+async def upload_project_spec(
+    project_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(auth.get_current_user)
+):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    # Check ownership if project has a user_id
+    if project.user_id and (not current_user or project.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this project")
+        
+    content = await file.read()
+    filename = file.filename
+    
+    try:
+        text_content = content.decode("utf-8")
+    except UnicodeDecodeError:
+        text_content = f"[Binary File: {filename} - Content omitted]"
+
+    spec_context = f"\n\n[Ingested Specification from '{filename}']:\n{text_content[:6000]}"
+    
+    orchestrator = AgentOrchestrator(project_data={
+        "name": project.name,
+        "description": project.description + spec_context,
+        "industry": project.industry,
+        "scale": project.scale,
+        "region": project.region,
+        "preferred_cloud": project.preferred_cloud,
+        "budget": project.budget,
+        "compliance": project.compliance
+    })
+    
+    final_update = None
+    async for update in orchestrator.run_discovery_stream():
+        if update["type"] == "architecture_ready":
+            final_update = update
+            break
+            
+    if not final_update:
+        raise HTTPException(status_code=500, detail="Failed to parse spec and generate architecture layout")
+        
+    latest_v = db.query(models.ArchitectureVersion).filter(
+        models.ArchitectureVersion.project_id == project_id
+    ).order_by(models.ArchitectureVersion.version_number.desc()).first()
+    
+    next_num = (latest_v.version_number + 1) if latest_v else 1
+    
+    db_version = models.ArchitectureVersion(
+        project_id=project_id,
+        version_number=next_num,
+        commit_msg=f"Uploaded Spec: {filename}",
+        parent_version_id=latest_v.id if latest_v else None
+    )
+    db.add(db_version)
+    db.commit()
+    db.refresh(db_version)
+    
+    for comp in final_update["components"]:
+        db_comp = models.Component(
+            version_id=db_version.id,
+            name=comp["name"],
+            type=comp["type"],
+            technology=comp["technology"],
+            x=comp["x"],
+            y=comp["y"],
+            responsibilities=comp.get("responsibilities"),
+            dependencies=comp.get("dependencies", []),
+            cost=comp.get("cost", 0.0),
+            security_notes=comp.get("security_notes"),
+            scaling_notes=comp.get("scaling_notes")
+        )
+        db.add(db_comp)
+        
+    for conn in final_update["connections"]:
+        db_conn = models.Connection(
+            version_id=db_version.id,
+            source_id=conn["source_id"],
+            target_id=conn["target_id"],
+            label=conn.get("label", ""),
+            animated=conn.get("animated", False)
+        )
+        db.add(db_conn)
+        
+    rev_data = final_update["review"]
+    db_review = models.Review(
+        project_id=project_id,
+        version_id=db_version.id,
+        score=rev_data["score"],
+        security_issues=rev_data["security_issues"],
+        scalability_issues=rev_data["scalability_issues"],
+        cost_issues=rev_data["cost_issues"],
+        latency_issues=rev_data["latency_issues"],
+        general_recommendations=rev_data["general_recommendations"]
+    )
+    db.add(db_review)
+    
+    db.commit()
+    db.refresh(db_version)
+    
+    return db_version
+
 # --- Discovery Sessions ---
 
 @app.get("/api/projects/{project_id}/session", response_model=schemas.DiscoverySessionResponse)
@@ -639,6 +872,59 @@ def handle_project_chat(project_id: str, payload: Dict[str, Any], db: Session = 
 
 # --- WebSocket Discovery ---
 
+GENERAL_QUESTIONS = [
+    "What is the expected initial and target scale of the application (e.g. 10k, 100k, 1M+ active users)?",
+    "Which cloud provider do you prefer (AWS, GCP, Azure, or Hybrid/On-Premise)?",
+    "Do you require real-time features like WebSockets, real-time message streams, or push notifications?",
+    "Are there any compliance requirements we must satisfy (e.g. HIPAA, GDPR, SOC2)?",
+    "What is your target budget constraint (Startup, Mid-Sized, Enterprise)?"
+]
+
+INDUSTRY_QUESTIONS = {
+    "health": [
+        "What is the expected patient registry size and active daily user scale (e.g., 10k, 100k, 1M+ patients/doctors)?",
+        "Which cloud provider do you prefer for HIPAA-compliant hosting (AWS, GCP, Azure, or Hybrid)?",
+        "Do you need to integrate with Electronic Health Records (EHR/EMR) via FHIR/HL7, or support DICOM medical imaging?",
+        "Are there strict regulatory compliance standards we must adhere to (e.g., HIPAA, GDPR, SOC2, or local healthcare acts)?",
+        "What are your target budget constraints for secure, high-availability hosting (Startup, Mid-Sized, Enterprise)?"
+    ],
+    "fintech": [
+        "What is the expected active user base and transaction throughput (e.g., 10k users, 100+ Transactions Per Second)?",
+        "Which cloud provider or hosting model do you prefer for secure financial services (AWS, GCP, Azure, or Private Cloud)?",
+        "Do you require real-time transaction ledgers, instant fraud detection pipelines, or third-party banking API integrations?",
+        "What financial compliance or auditing standards apply to this platform (e.g., PCI-DSS, SOC2, ISO 27001)?",
+        "What is your hosting budget tier, keeping in mind database redundancy and HSM/KMS costs (Startup, Mid-Sized, Enterprise)?"
+    ],
+    "finance": [
+        "What is the expected active user base and transaction throughput (e.g., 10k users, 100+ Transactions Per Second)?",
+        "Which cloud provider or hosting model do you prefer for secure financial services (AWS, GCP, Azure, or Private Cloud)?",
+        "Do you require real-time transaction ledgers, instant fraud detection pipelines, or third-party banking API integrations?",
+        "What financial compliance or auditing standards apply to this platform (e.g., PCI-DSS, SOC2, ISO 27001)?",
+        "What is your hosting budget tier, keeping in mind database redundancy and HSM/KMS costs (Startup, Mid-Sized, Enterprise)?"
+    ],
+    "e-commerce": [
+        "What is the expected user scale and peak concurrency (e.g., 10k, 100k, 1M+ active shoppers during holiday sales)?",
+        "Which cloud provider do you prefer for running a fast, global e-commerce application (AWS, GCP, Azure)?",
+        "Do you require real-time inventory synchronization, instant cart state updates, or AI-driven recommendation engines?",
+        "Are there any payment card industry (PCI-DSS) or user privacy compliance regulations (GDPR, CCPA) we must satisfy?",
+        "What is the budget tier for this project, including CDN and multi-region failover costs (Startup, Mid-Sized, Enterprise)?"
+    ],
+    "iot": [
+        "What is the expected number of connected IoT devices and data ingestion rate (e.g., 10k devices, 1000 telemetry packets/sec)?",
+        "Which cloud provider do you prefer for managing IoT core registries and data streams (AWS, GCP, Azure)?",
+        "Do we need real-time telemetry streaming, WebSockets for status changes, or message queues for asynchronous task workers?",
+        "Are there specific industrial, automotive, or consumer data safety and privacy regulations we need to comply with?",
+        "What is the budget constraint for high-volume database writes and cold storage archiving (Startup, Mid-Sized, Enterprise)?"
+    ],
+    "social": [
+        "What is the target active user count and media/chat message volume (e.g., 10k, 100k, 1M+ daily active users)?",
+        "Which cloud provider do you prefer for cost-effective application and media hosting (AWS, GCP, Azure)?",
+        "Do you require real-time features like instant messaging, live feed updates, WebSockets, or push notifications?",
+        "Are there specific content moderation, child safety (COPPA), or privacy compliance standards (GDPR) we must support?",
+        "What is the budget tier for hosting and network egress (Startup, Mid-Sized, Enterprise)?"
+    ]
+}
+
 @app.websocket("/api/ws/discovery/{session_id}")
 async def websocket_discovery(websocket: WebSocket, session_id: str, db: Session = Depends(get_db)):
     await websocket.accept()
@@ -651,16 +937,18 @@ async def websocket_discovery(websocket: WebSocket, session_id: str, db: Session
         await websocket.close()
         return
 
+    # Fetch project and resolve questions
+    project = session.project
+    industry_key = (project.industry or "").lower().strip() if project else ""
+    
+    questions = GENERAL_QUESTIONS
+    for key, q_list in INDUSTRY_QUESTIONS.items():
+        if key in industry_key:
+            questions = q_list
+            break
+
     # Track how many questions have been asked
     chat_history = session.chat_history or []
-    
-    questions = [
-        "What is the expected initial and target scale of the application (e.g. 10k, 100k, 1M+ active users)?",
-        "Which cloud provider do you prefer (AWS, GCP, Azure, or Hybrid/On-Premise)?",
-        "Do you require real-time features like WebSockets, real-time message streams, or push notifications?",
-        "Are there any compliance requirements we must satisfy (e.g. HIPAA, GDPR, SOC2)?",
-        "What is your target budget constraint (Startup, Mid-Sized, Enterprise)?"
-    ]
 
     try:
         while True:
@@ -680,9 +968,9 @@ async def websocket_discovery(websocket: WebSocket, session_id: str, db: Session
             # Determine next step
             answered_questions = sum(1 for m in chat_history if m["role"] == "user")
             
-            if answered_questions < len(questions):
+            if answered_questions - 1 < len(questions):
                 # Ask next question
-                next_q = questions[answered_questions]
+                next_q = questions[answered_questions - 1]
                 chat_history.append({"role": "archon", "content": next_q})
                 session.chat_history = chat_history
                 db.commit()
@@ -706,18 +994,15 @@ async def websocket_discovery(websocket: WebSocket, session_id: str, db: Session
                 }))
 
                 # Extract parameters from replies to pass to orchestrator
-                project = session.project
-                
-                # Update project metadata based on chat replies to make it highly reactive
                 user_replies = [m["content"] for m in chat_history if m["role"] == "user"]
                 
-                if len(user_replies) >= 1: project.scale = user_replies[0]
-                if len(user_replies) >= 2: project.preferred_cloud = user_replies[1]
-                if len(user_replies) >= 3: 
-                    # check for real-time
-                    project.description = (project.description or "") + f" | Real-time requirement: {user_replies[2]}"
-                if len(user_replies) >= 4: project.compliance = user_replies[3]
-                if len(user_replies) >= 5: project.budget = user_replies[4]
+                # Update project metadata based on chat replies to make it highly reactive
+                if len(user_replies) >= 2: project.scale = user_replies[1]
+                if len(user_replies) >= 3: project.preferred_cloud = user_replies[2]
+                if len(user_replies) >= 4: 
+                    project.description = (project.description or "") + f" | Special/Real-time requirements: {user_replies[3]}"
+                if len(user_replies) >= 5: project.compliance = user_replies[4]
+                if len(user_replies) >= 6: project.budget = user_replies[5]
                 
                 db.commit()
 
